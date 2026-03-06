@@ -3,14 +3,25 @@ Claude NLP Service
 ==================
 Uses Claude Sonnet 4.6 with tool use to understand natural language
 and translate it into Google Calendar operations.
+
+Conversation memory: keeps last 5 rounds per user.
+Resets if the user has been inactive for more than 10 minutes.
 """
 
 import os
-from datetime import date
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 import anthropic
 import calendar_service
 
 client = anthropic.AsyncAnthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+
+TIMEZONE = ZoneInfo("Asia/Taipei")
+MEMORY_TIMEOUT = timedelta(minutes=10)
+MAX_ROUNDS = 5  # keep last 5 rounds (user + assistant pairs)
+
+# Per-user conversation state: { user_id: {"history": [...], "last_active": datetime} }
+_conversations: dict[str, dict] = {}
 
 TOOLS = [
     {
@@ -93,8 +104,37 @@ General:
 - Never take irreversible actions (delete/update) without confirmation"""
 
 
-async def process_message(user_message: str) -> str:
-    messages = [{"role": "user", "content": user_message}]
+def _get_history(user_id: str) -> list:
+    """Return conversation history, reset if inactive for > 10 minutes."""
+    now = datetime.now(TIMEZONE)
+    state = _conversations.get(user_id)
+
+    if state and (now - state["last_active"]) <= MEMORY_TIMEOUT:
+        return state["history"]
+
+    # New conversation or timed out — start fresh
+    _conversations[user_id] = {"history": [], "last_active": now}
+    return []
+
+
+def _save_history(user_id: str, user_msg: str, assistant_msg: str):
+    """Append this round to history, keeping only the last MAX_ROUNDS rounds."""
+    now = datetime.now(TIMEZONE)
+    state = _conversations[user_id]
+    state["last_active"] = now
+
+    state["history"].append({"role": "user",      "content": user_msg})
+    state["history"].append({"role": "assistant",  "content": assistant_msg})
+
+    # Keep only the last MAX_ROUNDS rounds (each round = 2 messages)
+    max_messages = MAX_ROUNDS * 2
+    if len(state["history"]) > max_messages:
+        state["history"] = state["history"][-max_messages:]
+
+
+async def process_message(user_message: str, user_id: str = "default") -> str:
+    history = _get_history(user_id)
+    messages = history + [{"role": "user", "content": user_message}]
 
     # Agentic loop — let Claude call tools until done
     while True:
@@ -108,15 +148,15 @@ async def process_message(user_message: str) -> str:
 
         if response.stop_reason == "end_turn":
             texts = [b.text for b in response.content if b.type == "text"]
-            return texts[0] if texts else "Done."
+            reply = texts[0] if texts else "Done."
+            _save_history(user_id, user_message, reply)
+            return reply
 
         if response.stop_reason != "tool_use":
             return "Sorry, something went wrong. Please try again."
 
-        # Append assistant response (with tool_use blocks)
         messages.append({"role": "assistant", "content": response.content})
 
-        # Execute each tool call
         tool_results = []
         for block in response.content:
             if block.type != "tool_use":

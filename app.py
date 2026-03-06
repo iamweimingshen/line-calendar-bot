@@ -67,32 +67,33 @@ async def webhook(request: Request):
         if not isinstance(event, MessageEvent):
             continue
 
-        # Security: only respond to Brian
         if LINE_USER_ID and event.source.user_id != LINE_USER_ID:
             continue
 
+        user_id = event.source.user_id
+
         if isinstance(event.message, TextMessageContent):
             asyncio.create_task(
-                _handle_message(event.message.text, event.reply_token)
+                _handle_message(event.message.text, event.reply_token, user_id)
             )
         elif isinstance(event.message, AudioMessageContent):
             asyncio.create_task(
-                _handle_audio(event.message.id, event.reply_token)
+                _handle_audio(event.message.id, event.reply_token, user_id)
             )
 
     return {"status": "ok"}
 
 
-async def _handle_message(user_message: str, reply_token: str):
+async def _handle_message(user_message: str, reply_token: str, user_id: str):
     try:
-        reply = await claude_service.process_message(user_message)
+        reply = await claude_service.process_message(user_message, user_id)
     except Exception as e:
         reply = f"❌ Error: {e}"
 
     await _reply(reply_token, reply)
 
 
-async def _handle_audio(message_id: str, reply_token: str):
+async def _handle_audio(message_id: str, reply_token: str, user_id: str):
     try:
         async with AsyncApiClient(configuration) as api_client:
             blob_api = AsyncMessagingApiBlob(api_client)
@@ -103,7 +104,7 @@ async def _handle_audio(message_id: str, reply_token: str):
             await _reply(reply_token, "❌ 無法辨識語音，請再說一次或改用文字。")
             return
 
-        reply = await claude_service.process_message(text)
+        reply = await claude_service.process_message(text, user_id)
     except Exception as e:
         reply = f"❌ 語音處理失敗: {e}"
 
