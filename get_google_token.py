@@ -19,6 +19,7 @@ load_dotenv(Path(__file__).parent / ".env")
 SCOPES = [
     "https://www.googleapis.com/auth/calendar",
     "https://www.googleapis.com/auth/cloud-platform",
+    "https://www.googleapis.com/auth/tasks",
 ]
 
 

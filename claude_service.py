@@ -2,7 +2,7 @@
 Claude NLP Service
 ==================
 Uses Claude Sonnet 4.6 with tool use to understand natural language
-and translate it into Google Calendar operations.
+and translate it into Google Calendar and Google Tasks operations.
 
 Conversation memory: keeps last 5 rounds per user.
 Resets if the user has been inactive for more than 10 minutes.
@@ -13,20 +13,21 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 import anthropic
 import calendar_service
+import tasks_service
 
 client = anthropic.AsyncAnthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
 TIMEZONE = ZoneInfo("Asia/Taipei")
 MEMORY_TIMEOUT = timedelta(minutes=10)
-MAX_ROUNDS = 5  # keep last 5 rounds (user + assistant pairs)
+MAX_ROUNDS = 5
 
-# Per-user conversation state: { user_id: {"history": [...], "last_active": datetime} }
 _conversations: dict[str, dict] = {}
 
 TOOLS = [
+    # ── Calendar tools ──────────────────────────────────────────────────────
     {
         "name": "create_event",
-        "description": "Create a new calendar event.",
+        "description": "Create a new Google Calendar event.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -40,11 +41,11 @@ TOOLS = [
     },
     {
         "name": "get_events",
-        "description": "Get calendar events within a date/time range.",
+        "description": "Get Google Calendar events within a date/time range.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "start_date": {"type": "string", "description": "Start of range (ISO format, e.g. 2026-03-05 or 2026-03-05T00:00:00)"},
+                "start_date": {"type": "string", "description": "Start of range (ISO format)"},
                 "end_date":   {"type": "string", "description": "End of range (ISO format)"},
             },
             "required": ["start_date", "end_date"],
@@ -52,7 +53,7 @@ TOOLS = [
     },
     {
         "name": "update_event",
-        "description": "Update an existing event. Use get_events first to find the event_id.",
+        "description": "Update an existing calendar event. Use get_events first to find the event_id.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -76,27 +77,84 @@ TOOLS = [
             "required": ["event_id"],
         },
     },
+    # ── Tasks tools ──────────────────────────────────────────────────────────
+    {
+        "name": "create_task",
+        "description": "Create a new Google Task (todo item).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Task title"},
+                "notes": {"type": "string", "description": "Optional notes or details"},
+                "due":   {"type": "string", "description": "Optional due date (ISO format, e.g. 2026-03-07)"},
+            },
+            "required": ["title"],
+        },
+    },
+    {
+        "name": "get_tasks",
+        "description": "Get the list of Google Tasks (todos). Returns incomplete tasks by default.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "include_completed": {"type": "boolean", "description": "Set true to also show completed tasks"},
+            },
+        },
+    },
+    {
+        "name": "complete_task",
+        "description": "Mark a Google Task as completed. Use get_tasks first to find the task_id.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Google Task ID"},
+            },
+            "required": ["task_id"],
+        },
+    },
+    {
+        "name": "delete_task",
+        "description": "Delete a Google Task. Use get_tasks first to find the task_id.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Google Task ID to delete"},
+            },
+            "required": ["task_id"],
+        },
+    },
 ]
 
 
 def _system_prompt() -> str:
     today = date.today().strftime("%Y-%m-%d (%A)")
-    return f"""You are Brian's personal calendar assistant on LINE.
+    return f"""You are Brian's personal assistant on LINE.
 Brian is in Taipei, Taiwan (UTC+8). Today is {today}.
+
+You manage two things:
+1. Google Calendar — time-based events (meetings, appointments)
+2. Google Tasks — todo items without a fixed time (errands, reminders)
+
+Use Calendar for things with a specific date/time.
+Use Tasks for things without a fixed time ("記得買牛奶", "研究報告").
 
 Rules:
 - Reply in the same language Brian uses (English or Traditional Chinese)
 - Be concise — this is a mobile chat interface
 
-Creating events:
+Creating calendar events:
 - If the date is missing or unclear, ask before creating
 - If the time is missing or unclear, ask before creating
 - Default duration: 1 hour if not specified (no need to ask)
 
-Deleting or updating events:
-- Always call get_events first to find matching events
-- If multiple events match, list them and ask which one to act on
-- If exactly one event matches, briefly confirm the title and time, then proceed
+Creating tasks:
+- Title is enough to create — due date is optional, ask only if Brian mentions it
+- Do not ask for due date unless Brian brings it up
+
+Deleting or updating (calendar or tasks):
+- Always fetch first to find the correct ID
+- If multiple items match, list them and ask which one
+- If exactly one matches, confirm title before acting
 - Never delete or update without showing what you found first
 
 General:
@@ -105,28 +163,23 @@ General:
 
 
 def _get_history(user_id: str) -> list:
-    """Return conversation history, reset if inactive for > 10 minutes."""
     now = datetime.now(TIMEZONE)
     state = _conversations.get(user_id)
 
     if state and (now - state["last_active"]) <= MEMORY_TIMEOUT:
         return state["history"]
 
-    # New conversation or timed out — start fresh
     _conversations[user_id] = {"history": [], "last_active": now}
     return []
 
 
 def _save_history(user_id: str, user_msg: str, assistant_msg: str):
-    """Append this round to history, keeping only the last MAX_ROUNDS rounds."""
     now = datetime.now(TIMEZONE)
     state = _conversations[user_id]
     state["last_active"] = now
-
     state["history"].append({"role": "user",      "content": user_msg})
     state["history"].append({"role": "assistant",  "content": assistant_msg})
 
-    # Keep only the last MAX_ROUNDS rounds (each round = 2 messages)
     max_messages = MAX_ROUNDS * 2
     if len(state["history"]) > max_messages:
         state["history"] = state["history"][-max_messages:]
@@ -136,7 +189,6 @@ async def process_message(user_message: str, user_id: str = "default") -> str:
     history = _get_history(user_id)
     messages = history + [{"role": "user", "content": user_message}]
 
-    # Agentic loop — let Claude call tools until done
     while True:
         response = await client.messages.create(
             model="claude-sonnet-4-6",
@@ -180,6 +232,7 @@ async def process_message(user_message: str, user_id: str = "default") -> str:
 
 
 def _execute_tool(name: str, inputs: dict) -> str:
+    # Calendar
     if name == "create_event":
         event = calendar_service.create_event(**inputs)
         return f"Created: {event.get('id')} — {event.get('summary')}"
@@ -201,5 +254,29 @@ def _execute_tool(name: str, inputs: dict) -> str:
     if name == "delete_event":
         calendar_service.delete_event(**inputs)
         return "Deleted successfully."
+
+    # Tasks
+    if name == "create_task":
+        task = tasks_service.create_task(**inputs)
+        return f"Created task: {task.get('id')} — {task.get('title')}"
+
+    if name == "get_tasks":
+        tasks = tasks_service.get_tasks(**inputs)
+        if not tasks:
+            return "No tasks found."
+        lines = []
+        for t in tasks:
+            due = f" (due: {t['due'][:10]})" if t.get("due") else ""
+            status = "✅" if t.get("status") == "completed" else "☐"
+            lines.append(f"{status} [{t['id']}] {t.get('title', '(no title)')}{due}")
+        return "\n".join(lines)
+
+    if name == "complete_task":
+        task = tasks_service.complete_task(**inputs)
+        return f"Completed: {task.get('title')}"
+
+    if name == "delete_task":
+        tasks_service.delete_task(**inputs)
+        return "Task deleted."
 
     return f"Unknown tool: {name}"
