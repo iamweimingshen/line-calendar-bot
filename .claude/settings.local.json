@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//opt/homebrew/bin/**)",
+      "Read(//opt/homebrew/**)",
+      "Bash(/opt/homebrew/bin/ngrok --version)",
+      "Bash(brew uninstall ngrok)",
+      "Bash(brew install --no-quarantine ngrok)",
+      "Bash(curl -Lo /tmp/ngrok.zip \"https://bin.ngrok.com/ngrok/v3/stable/ngrok-v3-stable-darwin-arm64.zip\")",
+      "Bash(unzip -o /tmp/ngrok.zip -d /usr/local/bin/)",
+      "Bash(chmod +x /usr/local/bin/ngrok)",
+      "Bash(ngrok --version)",
+      "Bash(git -C /Users/brian_shen/line-calendar-bot status)",
+      "Bash(git init)",
+      "Bash(git add -A)",
+      "Bash(git commit -m \"Initial commit: LINE Calendar Bot\")",
+      "Bash(git config --global user.email \"iamweimingshen@gmail.com\")",
+      "Bash(git config --global user.name \"Brian Shen\")"
+    ]
+  }
+}
