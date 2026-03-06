@@ -3,7 +3,7 @@ Scheduler Service
 ==================
 Background jobs:
 - Every 5 mins: self-ping to prevent Render from sleeping
-- 7am daily morning briefing (next 2 days events)
+- 7am daily morning briefing (today + tomorrow events)
 - Every minute: push reminder 15 mins before events
 """
 
@@ -27,11 +27,10 @@ TIMEZONE = ZoneInfo("Asia/Taipei")
 
 LINE_USER_ID              = os.environ.get("LINE_USER_ID", "")
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
-SELF_URL                  = os.environ.get("RENDER_EXTERNAL_URL", "")  # auto-set by Render
+SELF_URL                  = os.environ.get("RENDER_EXTERNAL_URL", "")
 
 configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 
-# In-memory set to avoid sending duplicate reminders
 _reminded_event_ids: set = set()
 
 
@@ -58,24 +57,25 @@ async def _push(message: str):
 
 
 async def morning_briefing():
-    """7:00 AM — send events for the next 2 days."""
+    """7:00 AM — send events for today and tomorrow (full days)."""
     now = datetime.now(TIMEZONE)
-    end = now + timedelta(days=2)
+    today_start  = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    tomorrow_end = today_start + timedelta(days=2)  # end of tomorrow = start of day after
 
     try:
         events = calendar_service.get_events(
-            start_date=now.isoformat(),
-            end_date=end.isoformat(),
+            start_date=today_start.isoformat(),
+            end_date=tomorrow_end.isoformat(),
         )
     except Exception as e:
         await _push(f"☀️ 早安 Brian！取得行程失敗：{e}")
         return
 
     if not events:
-        await _push("☀️ 早安 Brian！未來兩天沒有行程，放鬆一下！")
+        await _push("☀️ 早安 Brian！今明兩天沒有行程，放鬆一下！")
         return
 
-    lines = ["☀️ 早安 Brian！未來兩天的行程：\n"]
+    lines = ["☀️ 早安 Brian！今明兩天的行程：\n"]
     for e in events:
         start = (e.get("start") or {}).get("dateTime") or (e.get("start") or {}).get("date", "")
         if "T" in start:
