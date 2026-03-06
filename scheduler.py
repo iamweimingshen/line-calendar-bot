@@ -4,7 +4,7 @@ Scheduler Service
 Background jobs:
 - Every 5 mins: self-ping to prevent Render from sleeping
 - 7am daily morning briefing (today + tomorrow events)
-- Every minute: push reminder 15 mins before events
+- Every minute: push reminder 15 mins before timed events (not all-day)
 """
 
 import os
@@ -60,7 +60,7 @@ async def morning_briefing():
     """7:00 AM — send events for today and tomorrow (full days)."""
     now = datetime.now(TIMEZONE)
     today_start  = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    tomorrow_end = today_start + timedelta(days=2)  # end of tomorrow = start of day after
+    tomorrow_end = today_start + timedelta(days=2)
 
     try:
         events = calendar_service.get_events(
@@ -77,19 +77,22 @@ async def morning_briefing():
 
     lines = ["☀️ 早安 Brian！今明兩天的行程：\n"]
     for e in events:
-        start = (e.get("start") or {}).get("dateTime") or (e.get("start") or {}).get("date", "")
-        if "T" in start:
-            dt = datetime.fromisoformat(start).astimezone(TIMEZONE)
+        start = (e.get("start") or {})
+        if "dateTime" in start:
+            dt = datetime.fromisoformat(start["dateTime"]).astimezone(TIMEZONE)
             time_str = dt.strftime("%m/%d (%a) %H:%M")
         else:
-            time_str = start
+            # All-day event
+            time_str = f"{start.get('date', '')} (整天)"
         lines.append(f"📅 {e.get('summary', '(no title)')} — {time_str}")
 
     await _push("\n".join(lines))
 
 
 async def check_upcoming_reminders():
-    """Every minute — push reminder if an event starts in ~15 minutes."""
+    """Every minute — push reminder if a TIMED event starts in ~15 minutes.
+    All-day events are skipped (already shown in morning briefing).
+    """
     now = datetime.now(TIMEZONE)
     target = now + timedelta(minutes=15)
 
@@ -105,17 +108,18 @@ async def check_upcoming_reminders():
         return
 
     for event in events:
+        # Skip all-day events — no dateTime means it's a full-day event
+        if "dateTime" not in (event.get("start") or {}):
+            continue
+
         event_id = event.get("id")
         if not event_id or event_id in _reminded_event_ids:
             continue
 
         _reminded_event_ids.add(event_id)
         title    = event.get("summary", "(no title)")
-        start    = (event.get("start") or {}).get("dateTime", "")
-        time_str = ""
-        if "T" in start:
-            dt = datetime.fromisoformat(start).astimezone(TIMEZONE)
-            time_str = dt.strftime("%H:%M")
+        dt       = datetime.fromisoformat(event["start"]["dateTime"]).astimezone(TIMEZONE)
+        time_str = dt.strftime("%H:%M")
 
         await _push(f"⏰ 提醒：《{title}》15 分鐘後開始（{time_str}）")
 
