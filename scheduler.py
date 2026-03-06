@@ -2,6 +2,7 @@
 Scheduler Service
 ==================
 Background jobs:
+- Every 5 mins: self-ping to prevent Render from sleeping
 - 7am daily morning briefing (next 2 days events)
 - Every minute: push reminder 15 mins before events
 """
@@ -10,6 +11,7 @@ import os
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from linebot.v3.messaging import (
     AsyncApiClient,
@@ -23,12 +25,25 @@ import calendar_service
 
 TIMEZONE = ZoneInfo("Asia/Taipei")
 
-LINE_USER_ID          = os.environ.get("LINE_USER_ID", "")
+LINE_USER_ID              = os.environ.get("LINE_USER_ID", "")
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
-configuration         = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
+SELF_URL                  = os.environ.get("RENDER_EXTERNAL_URL", "")  # auto-set by Render
+
+configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 
 # In-memory set to avoid sending duplicate reminders
 _reminded_event_ids: set = set()
+
+
+async def self_ping():
+    """Ping our own health endpoint every 5 mins to prevent Render from sleeping."""
+    if not SELF_URL:
+        return
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.get(f"{SELF_URL}/", timeout=10)
+    except Exception:
+        pass
 
 
 async def _push(message: str):
@@ -78,7 +93,6 @@ async def check_upcoming_reminders():
     now = datetime.now(TIMEZONE)
     target = now + timedelta(minutes=15)
 
-    # 1-minute window centered on the 15-min mark
     window_start = target - timedelta(seconds=30)
     window_end   = target + timedelta(seconds=30)
 
@@ -108,6 +122,13 @@ async def check_upcoming_reminders():
 
 def create_scheduler() -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
+
+    scheduler.add_job(
+        self_ping,
+        trigger="interval",
+        minutes=5,
+        id="self_ping",
+    )
 
     scheduler.add_job(
         morning_briefing,
