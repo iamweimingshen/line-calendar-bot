@@ -7,6 +7,7 @@ processes them with Claude, and replies via Line Messaging API.
 
 import asyncio
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -26,15 +27,25 @@ from linebot.v3.webhooks import MessageEvent, TextMessageContent, AudioMessageCo
 
 import claude_service
 import speech_service
-
-app = FastAPI()
+from scheduler import create_scheduler
 
 LINE_CHANNEL_SECRET       = os.environ.get("LINE_CHANNEL_SECRET", "")
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
-LINE_USER_ID              = os.environ.get("LINE_USER_ID", "")  # security: only respond to Brian
+LINE_USER_ID              = os.environ.get("LINE_USER_ID", "")
 
 configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 parser        = WebhookParser(LINE_CHANNEL_SECRET)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    scheduler = create_scheduler()
+    scheduler.start()
+    yield
+    scheduler.shutdown()
+
+
+app = FastAPI(lifespan=lifespan)
 
 
 @app.get("/")
