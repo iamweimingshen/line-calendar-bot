@@ -6,10 +6,13 @@ processes them with Claude, and replies via Line Messaging API.
 """
 
 import asyncio
+import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 load_dotenv(Path(__file__).parent / ".env")
 
@@ -67,7 +70,8 @@ async def webhook(request: Request):
         if not isinstance(event, MessageEvent):
             continue
 
-        if LINE_USER_ID and event.source.user_id != LINE_USER_ID:
+        # Fail-secure: if LINE_USER_ID is not configured, reject all messages
+        if not LINE_USER_ID or event.source.user_id != LINE_USER_ID:
             continue
 
         user_id = event.source.user_id
@@ -88,7 +92,8 @@ async def _handle_message(user_message: str, reply_token: str, user_id: str):
     try:
         reply = await claude_service.process_message(user_message, user_id)
     except Exception as e:
-        reply = f"❌ Error: {e}"
+        logger.exception("Error processing message for user %s", user_id)
+        reply = "❌ 發生錯誤，請稍後再試。"
 
     await _reply(reply_token, reply)
 
@@ -106,7 +111,8 @@ async def _handle_audio(message_id: str, reply_token: str, user_id: str):
 
         reply = await claude_service.process_message(text, user_id)
     except Exception as e:
-        reply = f"❌ 語音處理失敗: {e}"
+        logger.exception("Error processing audio for user %s", user_id)
+        reply = "❌ 語音處理失敗，請稍後再試或改用文字。"
 
     await _reply(reply_token, reply)
 

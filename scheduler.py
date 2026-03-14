@@ -31,7 +31,8 @@ SELF_URL                  = os.environ.get("RENDER_EXTERNAL_URL", "")
 
 configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 
-_reminded_event_ids: set = set()
+# event_id -> reminded_at (datetime); pruned after 24 hours
+_reminded_events: dict = {}
 
 
 async def self_ping():
@@ -107,16 +108,22 @@ async def check_upcoming_reminders():
     except Exception:
         return
 
+    # Prune entries older than 24 hours to prevent unbounded growth
+    cutoff = now - timedelta(hours=24)
+    expired = [k for k, v in _reminded_events.items() if v < cutoff]
+    for k in expired:
+        del _reminded_events[k]
+
     for event in events:
         # Skip all-day events — no dateTime means it's a full-day event
         if "dateTime" not in (event.get("start") or {}):
             continue
 
         event_id = event.get("id")
-        if not event_id or event_id in _reminded_event_ids:
+        if not event_id or event_id in _reminded_events:
             continue
 
-        _reminded_event_ids.add(event_id)
+        _reminded_events[event_id] = now
         title    = event.get("summary", "(no title)")
         dt       = datetime.fromisoformat(event["start"]["dateTime"]).astimezone(TIMEZONE)
         time_str = dt.strftime("%H:%M")

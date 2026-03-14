@@ -20,6 +20,7 @@ client = anthropic.AsyncAnthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 TIMEZONE = ZoneInfo("Asia/Taipei")
 MEMORY_TIMEOUT = timedelta(minutes=10)
 MAX_ROUNDS = 5
+MAX_TOOL_ITERATIONS = 10
 
 _conversations: dict[str, dict] = {}
 
@@ -189,10 +190,10 @@ async def process_message(user_message: str, user_id: str = "default") -> str:
     history = _get_history(user_id)
     messages = history + [{"role": "user", "content": user_message}]
 
-    while True:
+    for _ in range(MAX_TOOL_ITERATIONS):
         response = await client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=1024,
+            model="claude-opus-4-6",
+            max_tokens=2048,
             system=_system_prompt(),
             tools=TOOLS,
             messages=messages,
@@ -229,6 +230,8 @@ async def process_message(user_message: str, user_id: str = "default") -> str:
                 })
 
         messages.append({"role": "user", "content": tool_results})
+
+    return "❌ 處理步驟過多，請重新描述你的需求。"
 
 
 def _execute_tool(name: str, inputs: dict) -> str:

@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LINE Calendar Bot</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #0f0f0f;
+    color: #f0f0f0;
+    overflow: hidden;
+    height: 100vh;
+  }
+
+  .slides { width: 100%; height: 100vh; position: relative; }
+
+  .slide {
+    display: none;
+    position: absolute;
+    inset: 0;
+    padding: 80px 100px;
+    flex-direction: column;
+    justify-content: center;
+    background: #0f0f0f;
+  }
+  .slide.active { display: flex; }
+
+  /* Accent colors */
+  .green  { color: #06C755; }
+  .blue   { color: #4A9EFF; }
+  .yellow { color: #FFD166; }
+  .gray   { color: #888; }
+
+  /* Slide types */
+  .slide-title {
+    background: linear-gradient(135deg, #0f0f0f 0%, #1a2a1a 100%);
+    align-items: flex-start;
+    justify-content: flex-end;
+    padding-bottom: 100px;
+  }
+
+  .slide-title .tag {
+    font-size: 13px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: #06C755;
+    margin-bottom: 20px;
+  }
+
+  .slide-title h1 {
+    font-size: 64px;
+    font-weight: 700;
+    line-height: 1.1;
+    margin-bottom: 24px;
+  }
+
+  .slide-title .subtitle {
+    font-size: 20px;
+    color: #888;
+    max-width: 600px;
+    line-height: 1.6;
+  }
+
+  .slide-title .accent-bar {
+    width: 60px;
+    height: 4px;
+    background: #06C755;
+    margin-bottom: 32px;
+    border-radius: 2px;
+  }
+
+  /* Section header */
+  .section-label {
+    font-size: 12px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: #06C755;
+    margin-bottom: 16px;
+  }
+
+  h2 {
+    font-size: 42px;
+    font-weight: 700;
+    margin-bottom: 48px;
+    line-height: 1.2;
+  }
+
+  h3 { font-size: 20px; font-weight: 600; margin-bottom: 12px; }
+
+  /* Grid layouts */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 24px; }
+
+  /* Cards */
+  .card {
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    border-radius: 12px;
+    padding: 28px;
+  }
+  .card.highlight { border-color: #06C755; background: #0d1f0d; }
+  .card.blue-card { border-color: #4A9EFF; background: #0d1520; }
+
+  .card .icon {
+    font-size: 28px;
+    margin-bottom: 16px;
+  }
+
+  .card p { color: #aaa; font-size: 14px; line-height: 1.7; margin-top: 8px; }
+
+  /* Feature list */
+  .feature-list { list-style: none; }
+  .feature-list li {
+    padding: 12px 0;
+    border-bottom: 1px solid #1e1e1e;
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    font-size: 16px;
+    line-height: 1.5;
+  }
+  .feature-list li:last-child { border-bottom: none; }
+  .feature-list .badge {
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    white-space: nowrap;
+    font-weight: 600;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .badge-cal { background: #0d1f0d; color: #06C755; border: 1px solid #06C755; }
+  .badge-task { background: #0d1520; color: #4A9EFF; border: 1px solid #4A9EFF; }
+  .badge-voice { background: #1f1506; color: #FFD166; border: 1px solid #FFD166; }
+  .badge-auto { background: #1a0d1f; color: #c084fc; border: 1px solid #c084fc; }
+
+  /* Architecture diagram */
+  .arch {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    justify-content: center;
+    flex-wrap: nowrap;
+  }
+  .arch-node {
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    border-radius: 10px;
+    padding: 16px 20px;
+    text-align: center;
+    font-size: 13px;
+    min-width: 110px;
+  }
+  .arch-node .icon { font-size: 22px; margin-bottom: 6px; }
+  .arch-node .label { color: #aaa; font-size: 11px; margin-top: 4px; }
+  .arch-arrow {
+    color: #444;
+    font-size: 20px;
+    padding: 0 8px;
+    flex-shrink: 0;
+  }
+  .arch-node.highlighted { border-color: #06C755; background: #0d1f0d; }
+
+  /* Cost table */
+  table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  th {
+    text-align: left;
+    padding: 12px 16px;
+    background: #1a1a1a;
+    color: #888;
+    font-size: 12px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    font-weight: 500;
+  }
+  td {
+    padding: 14px 16px;
+    border-bottom: 1px solid #1a1a1a;
+  }
+  tr:last-child td { border-bottom: none; }
+  .cost-total td { font-weight: 700; font-size: 16px; background: #0d1f0d; color: #06C755; }
+  .cost-zero { color: #555; }
+
+  /* Flow steps */
+  .flow { display: flex; flex-direction: column; gap: 12px; }
+  .flow-step {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 14px 20px;
+    background: #1a1a1a;
+    border-radius: 8px;
+    font-size: 15px;
+  }
+  .flow-step .num {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: #06C755;
+    color: #000;
+    font-weight: 700;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .flow-step .desc { color: #ccc; }
+  .flow-step .tech { margin-left: auto; font-size: 12px; color: #555; }
+
+  /* Stat boxes */
+  .stat-box { text-align: center; }
+  .stat-box .number { font-size: 52px; font-weight: 700; color: #06C755; line-height: 1; }
+  .stat-box .unit { font-size: 16px; color: #06C755; }
+  .stat-box .label { font-size: 14px; color: #666; margin-top: 8px; }
+
+  /* Navigation */
+  .nav {
+    position: fixed;
+    bottom: 32px;
+    right: 40px;
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    z-index: 100;
+  }
+  .nav button {
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    color: #f0f0f0;
+    padding: 10px 20px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s;
+  }
+  .nav button:hover { background: #2a2a2a; border-color: #444; }
+  .nav button:disabled { opacity: 0.3; cursor: default; }
+  .nav .counter { font-size: 13px; color: #555; min-width: 50px; text-align: center; }
+
+  /* Progress bar */
+  .progress {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    height: 2px;
+    background: #06C755;
+    transition: width 0.3s ease;
+    z-index: 100;
+  }
+
+  /* Divider */
+  .divider { width: 48px; height: 3px; background: #06C755; border-radius: 2px; margin-bottom: 32px; }
+
+  /* Tag pill */
+  .pill {
+    display: inline-block;
+    font-size: 12px;
+    padding: 4px 12px;
+    border-radius: 20px;
+    margin-right: 8px;
+    margin-bottom: 8px;
+  }
+  .pill-green { background: #0d1f0d; color: #06C755; border: 1px solid #1a4a1a; }
+  .pill-blue  { background: #0d1520; color: #4A9EFF; border: 1px solid #1a3a5a; }
+  .pill-gray  { background: #1a1a1a; color: #888;    border: 1px solid #2a2a2a; }
+</style>
+</head>
+<body>
+
+<div class="slides">
+
+  <!-- Slide 1: Title -->
+  <div class="slide slide-title active">
+    <div class="tag">Personal Project — 2026</div>
+    <div class="accent-bar"></div>
+    <h1>LINE<br><span class="green">Calendar Bot</span></h1>
+    <p class="subtitle">用自然語言，透過 LINE 管理 Google Calendar 和 Google Tasks — 文字、語音都可以。</p>
+  </div>
+
+  <!-- Slide 2: Problem -->
+  <div class="slide">
+    <div class="section-label">Motivation</div>
+    <h2>為什麼做這個？</h2>
+    <div class="grid-2" style="gap:24px;">
+      <div class="card">
+        <div class="icon">😤</div>
+        <h3>問題</h3>
+        <p>開啟 Google Calendar app、選日期、填表單 — 太繁瑣。腦袋有個想法時，希望直接說出來就能記錄。</p>
+      </div>
+      <div class="card">
+        <div class="icon">📱</div>
+        <h3>目標</h3>
+        <p>在最常用的通訊軟體 LINE 上，用說話或打字就能新增、查詢、修改行程和待辦事項。</p>
+      </div>
+      <div class="card">
+        <div class="icon">🔒</div>
+        <h3>只給自己用</h3>
+        <p>Bot 只回應 Brian 的 LINE 帳號，沒有多用戶管理的複雜性。</p>
+      </div>
+      <div class="card">
+        <div class="icon">💸</div>
+        <h3>低成本</h3>
+        <p>每月約 $5.5 USD，全部服務合計。不需要訂閱任何 SaaS 工具。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Slide 3: Architecture -->
+  <div class="slide">
+    <div class="section-label">System Design</div>
+    <h2>架構</h2>
+    <div class="arch" style="margin-bottom:40px;">
+      <div class="arch-node">
+        <div class="icon">📱</div>
+        <div>LINE App</div>
+        <div class="label">User</div>
+      </div>
+      <div class="arch-arrow">→</div>
+      <div class="arch-node">
+        <div class="icon">⚙️</div>
+        <div>FastAPI</div>
+        <div class="label">Render.com</div>
+      </div>
+      <div class="arch-arrow">→</div>
+      <div class="arch-node highlighted">
+        <div class="icon">🤖</div>
+        <div>Claude</div>
+        <div class="label">Sonnet 4.6</div>
+      </div>
+      <div class="arch-arrow">→</div>
+      <div class="arch-node">
+        <div class="icon">📅</div>
+        <div>Calendar</div>
+        <div class="label">Google API</div>
+      </div>
+      <div class="arch-arrow" style="opacity:0">→</div>
+      <div class="arch-node">
+        <div class="icon">✅</div>
+        <div>Tasks</div>
+        <div class="label">Google API</div>
+      </div>
+    </div>
+    <div class="grid-3">
+      <div class="card">
+        <h3 class="green">Webhook</h3>
+        <p>LINE 將用戶訊息 POST 到 Render 的 HTTPS endpoint，簽名驗證確保安全。</p>
+      </div>
+      <div class="card">
+        <h3 class="green">Claude Tool Use</h3>
+        <p>Claude 理解意圖後呼叫對應工具（Calendar 或 Tasks），形成 agentic loop。</p>
+      </div>
+      <div class="card">
+        <h3 class="green">Background Scheduler</h3>
+        <p>APScheduler 在同一個 Render 服務內運行，處理早安通知、提醒、self-ping。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Slide 4: Features -->
+  <div class="slide">
+    <div class="section-label">Features</div>
+    <h2>功能一覽</h2>
+    <ul class="feature-list">
+      <li><span class="badge badge-cal">Calendar</span><div>新增、查詢、修改、刪除行程 — 「明天下午三點開會」、「這週有什麼？」</div></li>
+      <li><span class="badge badge-task">Tasks</span><div>新增、查詢、完成、刪除待辦事項 — 「記得買牛奶」、「完成買牛奶」</div></li>
+      <li><span class="badge badge-voice">Voice</span><div>語音訊息自動轉文字 — m4a → ffmpeg → Google STT → Claude</div></li>
+      <li><span class="badge badge-auto">Proactive</span><div>每天 07:00 早安通知（今明行程） + 行程開始前 15 分鐘推送提醒</div></li>
+      <li><span class="badge badge-auto">Memory</span><div>對話記憶 10 分鐘、最多 5 輪 — 支援追問、確認、多輪互動</div></li>
+      <li><span class="badge badge-cal">Safety</span><div>缺日期/時間先追問；刪除/修改前列出找到的項目確認後才執行</div></li>
+    </ul>
+  </div>
+
+  <!-- Slide 5: Message Flow -->
+  <div class="slide">
+    <div class="section-label">How It Works</div>
+    <h2>訊息流程</h2>
+    <div class="grid-2" style="align-items:start; gap:40px;">
+      <div>
+        <h3 style="margin-bottom:20px; color:#888; font-size:14px; letter-spacing:2px; text-transform:uppercase;">文字 / 語音訊息</h3>
+        <div class="flow">
+          <div class="flow-step"><div class="num">1</div><div class="desc">用戶在 LINE 傳訊息</div></div>
+          <div class="flow-step"><div class="num">2</div><div class="desc">語音 → ffmpeg → Google STT 轉文字</div><div class="tech">voice only</div></div>
+          <div class="flow-step"><div class="num">3</div><div class="desc">載入對話歷史（< 10 分鐘）</div></div>
+          <div class="flow-step"><div class="num">4</div><div class="desc">Claude 判斷意圖，呼叫 Calendar 或 Tasks 工具</div></div>
+          <div class="flow-step"><div class="num">5</div><div class="desc">回覆用戶，存入對話記憶</div></div>
+        </div>
+      </div>
+      <div>
+        <h3 style="margin-bottom:20px; color:#888; font-size:14px; letter-spacing:2px; text-transform:uppercase;">主動推送</h3>
+        <div class="flow">
+          <div class="flow-step"><div class="num">★</div><div class="desc">每天 07:00 — 今明兩天行程早安通知</div></div>
+          <div class="flow-step"><div class="num">★</div><div class="desc">每分鐘 — 掃描 15 分鐘內開始的行程，推送提醒</div></div>
+          <div class="flow-step"><div class="num">★</div><div class="desc">每 5 分鐘 — self-ping 防止 Render 休眠</div></div>
+        </div>
+        <div style="margin-top:24px; padding:16px 20px; background:#0d1f0d; border-radius:8px; border:1px solid #1a4a1a;">
+          <p style="font-size:13px; color:#06C755;">所有排程器都在 Render 上運行，你的電腦不需要開著。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Slide 6: Tech Stack -->
+  <div class="slide">
+    <div class="section-label">Technology</div>
+    <h2>技術選型</h2>
+    <div class="grid-2" style="gap:20px;">
+      <div class="card">
+        <h3>🐍 Backend</h3>
+        <p style="margin-top:12px;">
+          <span class="pill pill-green">Python 3.11</span>
+          <span class="pill pill-green">FastAPI</span>
+          <span class="pill pill-green">uvicorn</span>
+          <span class="pill pill-green">APScheduler</span>
+        </p>
+        <p>非同步處理 webhook，APScheduler 在同一 process 內跑排程任務。</p>
+      </div>
+      <div class="card">
+        <h3>🤖 AI</h3>
+        <p style="margin-top:12px;">
+          <span class="pill pill-blue">Claude Sonnet 4.6</span>
+          <span class="pill pill-blue">Tool Use</span>
+        </p>
+        <p>Agentic loop — Claude 自主決定呼叫哪個工具、何時追問用戶。</p>
+      </div>
+      <div class="card">
+        <h3>🔊 Voice</h3>
+        <p style="margin-top:12px;">
+          <span class="pill pill-green">Google STT</span>
+          <span class="pill pill-gray">ffmpeg</span>
+        </p>
+        <p>LINE 傳來 m4a，ffmpeg subprocess 轉 FLAC，送 Google STT 轉文字。不依賴 pydub。</p>
+      </div>
+      <div class="card">
+        <h3>☁️ Infra</h3>
+        <p style="margin-top:12px;">
+          <span class="pill pill-gray">Render.com</span>
+          <span class="pill pill-gray">Google OAuth2</span>
+        </p>
+        <p>Render 免費方案，self-ping 防休眠。單一 refresh token 覆蓋 Calendar + Tasks + STT。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Slide 7: Cost -->
+  <div class="slide">
+    <div class="section-label">Economics</div>
+    <h2>每月成本</h2>
+    <div class="grid-2" style="gap:48px; align-items:center;">
+      <div>
+        <table>
+          <thead>
+            <tr><th>服務</th><th style="text-align:right;">費用</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Render.com</td><td style="text-align:right;" class="cost-zero">$0</td></tr>
+            <tr><td>Google Calendar API</td><td style="text-align:right;" class="cost-zero">$0</td></tr>
+            <tr><td>Google Tasks API</td><td style="text-align:right;" class="cost-zero">$0</td></tr>
+            <tr><td>Google Speech-to-Text</td><td style="text-align:right;" class="cost-zero">$0</td></tr>
+            <tr><td>LINE Messaging API</td><td style="text-align:right;" class="cost-zero">$0</td></tr>
+            <tr><td>Claude Sonnet 4.6 (input)</td><td style="text-align:right;">$2.16</td></tr>
+            <tr><td>Claude Sonnet 4.6 (output)</td><td style="text-align:right;">$3.38</td></tr>
+          </tbody>
+          <tfoot>
+            <tr class="cost-total"><td>Total</td><td style="text-align:right;">~$5.5 / 月</td></tr>
+          </tfoot>
+        </table>
+        <p style="font-size:12px; color:#555; margin-top:16px;">假設：30 次互動/天，平均 2 輪對話</p>
+      </div>
+      <div style="display:flex; flex-direction:column; gap:32px;">
+        <div class="stat-box">
+          <div class="number">$0</div>
+          <div class="label">Google + Render + LINE</div>
+        </div>
+        <div class="stat-box">
+          <div class="number">$5.5</div>
+          <div class="unit">USD / 月</div>
+          <div class="label">唯一費用：Claude API</div>
+        </div>
+        <div class="stat-box">
+          <div class="number" style="color:#4A9EFF;">$0.5</div>
+          <div class="label">改用 Claude Haiku 的成本</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Slide 8: What's Next -->
+  <div class="slide">
+    <div class="section-label">Roadmap</div>
+    <h2>未來改進方向</h2>
+    <div class="grid-2" style="gap:20px;">
+      <div class="card highlight">
+        <div class="icon">📋</div>
+        <h3>早安通知加入 Tasks</h3>
+        <p>目前早安只顯示 Calendar，加入未完成的 Tasks 清單讓早晨更完整。</p>
+      </div>
+      <div class="card highlight">
+        <div class="icon">📅</div>
+        <h3>Task 到期提醒</h3>
+        <p>Google Tasks 支援 due date，可在到期前推送提醒，不只 Calendar 行程。</p>
+      </div>
+      <div class="card">
+        <div class="icon">🧠</div>
+        <h3>Smart Model Routing</h3>
+        <p>簡單查詢用 Haiku（便宜），複雜操作用 Sonnet（準確）。每月成本可降至 $2–3。</p>
+      </div>
+      <div class="card">
+        <div class="icon">🗓️</div>
+        <h3>週報摘要</h3>
+        <p>每週日晚間推送下週行程總覽，協助提前規劃。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Slide 9: Summary -->
+  <div class="slide" style="background: linear-gradient(135deg, #0f0f0f 0%, #0d1f0d 100%);">
+    <div class="section-label">Summary</div>
+    <h2>總結</h2>
+    <div style="display:flex; gap:48px; align-items:center; margin-top:16px;">
+      <div style="flex:1;">
+        <div class="flow" style="gap:16px;">
+          <div class="flow-step" style="background:#1a2a1a; border:1px solid #2a4a2a;">
+            <div class="num">✓</div>
+            <div class="desc">LINE 文字 + 語音 → Google Calendar 完整 CRUD</div>
+          </div>
+          <div class="flow-step" style="background:#1a2a1a; border:1px solid #2a4a2a;">
+            <div class="num">✓</div>
+            <div class="desc">Google Tasks 待辦事項管理</div>
+          </div>
+          <div class="flow-step" style="background:#1a2a1a; border:1px solid #2a4a2a;">
+            <div class="num">✓</div>
+            <div class="desc">每天早安通知 + 15 分鐘前提醒</div>
+          </div>
+          <div class="flow-step" style="background:#1a2a1a; border:1px solid #2a4a2a;">
+            <div class="num">✓</div>
+            <div class="desc">對話記憶，支援追問與確認</div>
+          </div>
+          <div class="flow-step" style="background:#1a2a1a; border:1px solid #2a4a2a;">
+            <div class="num">✓</div>
+            <div class="desc">全自動運行，電腦不需要開著</div>
+          </div>
+        </div>
+      </div>
+      <div style="flex:0 0 280px; text-align:center;">
+        <div style="background:#1a2a1a; border:1px solid #2a4a2a; border-radius:16px; padding:40px 32px;">
+          <div style="font-size:48px; font-weight:700; color:#06C755; line-height:1;">$5.5</div>
+          <div style="color:#06C755; font-size:16px;">USD / 月</div>
+          <div style="color:#555; font-size:13px; margin-top:8px;">全部費用合計</div>
+          <div style="margin:24px 0; border-top:1px solid #2a4a2a;"></div>
+          <div style="font-size:13px; color:#888; line-height:1.8;">
+            Python + FastAPI<br>
+            Claude Sonnet 4.6<br>
+            Google APIs<br>
+            Render.com
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Navigation -->
+<div class="nav">
+  <button id="prev" onclick="changeSlide(-1)" disabled>←</button>
+  <span class="counter" id="counter">1 / 9</span>
+  <button id="next" onclick="changeSlide(1)">→</button>
+</div>
+<div class="progress" id="progress"></div>
+
+<script>
+  let current = 0;
+  const slides = document.querySelectorAll('.slide');
+  const total = slides.length;
+
+  function changeSlide(dir) {
+    slides[current].classList.remove('active');
+    current = Math.max(0, Math.min(total - 1, current + dir));
+    slides[current].classList.add('active');
+    document.getElementById('counter').textContent = `${current + 1} / ${total}`;
+    document.getElementById('prev').disabled = current === 0;
+    document.getElementById('next').disabled = current === total - 1;
+    document.getElementById('progress').style.width = `${((current + 1) / total) * 100}%`;
+  }
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') changeSlide(1);
+    if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp')   changeSlide(-1);
+  });
+
+  changeSlide(0);
+</script>
+</body>
+</html>

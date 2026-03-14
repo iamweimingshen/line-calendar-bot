@@ -5,31 +5,14 @@ Wraps the Google Tasks API.
 Uses the same OAuth2 refresh token as calendar_service.
 """
 
-import os
-from google.oauth2.credentials import Credentials
-from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
+import google_auth
 
 TASKLIST = "@default"
 
-SCOPES = [
-    "https://www.googleapis.com/auth/calendar",
-    "https://www.googleapis.com/auth/cloud-platform",
-    "https://www.googleapis.com/auth/tasks",
-]
-
 
 def _get_service():
-    creds = Credentials(
-        token=None,
-        refresh_token=os.environ.get("GOOGLE_REFRESH_TOKEN"),
-        client_id=os.environ.get("GOOGLE_CLIENT_ID"),
-        client_secret=os.environ.get("GOOGLE_CLIENT_SECRET"),
-        token_uri="https://oauth2.googleapis.com/token",
-        scopes=SCOPES,
-    )
-    creds.refresh(Request())
-    return build("tasks", "v1", credentials=creds)
+    return build("tasks", "v1", credentials=google_auth.get_credentials())
 
 
 def create_task(title: str, notes: str = "", due: str = "") -> dict:
@@ -39,7 +22,12 @@ def create_task(title: str, notes: str = "", due: str = "") -> dict:
     if notes:
         body["notes"] = notes
     if due:
-        body["due"] = due if due.endswith("Z") else due + "Z"
+        # Ensure valid RFC3339 UTC format (e.g. "2026-03-07T00:00:00Z")
+        if "T" not in due:
+            due = due + "T00:00:00Z"
+        elif not due.endswith("Z"):
+            due = due + "Z"
+        body["due"] = due
     return service.tasks().insert(tasklist=TASKLIST, body=body).execute()
 
 

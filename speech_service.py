@@ -5,36 +5,20 @@ Converts LINE audio messages (m4a) to text using Google Speech-to-Text.
 Uses ffmpeg subprocess directly to avoid pydub/pyaudioop dependency.
 """
 
-import io
 import os
 import subprocess
 import tempfile
 
-from google.oauth2.credentials import Credentials
-from google.auth.transport.requests import Request
 from google.cloud import speech
+import google_auth
 
-SCOPES = [
-    "https://www.googleapis.com/auth/calendar",
-    "https://www.googleapis.com/auth/cloud-platform",
-]
-
-
-def _get_credentials():
-    creds = Credentials(
-        token=None,
-        refresh_token=os.environ.get("GOOGLE_REFRESH_TOKEN"),
-        client_id=os.environ.get("GOOGLE_CLIENT_ID"),
-        client_secret=os.environ.get("GOOGLE_CLIENT_SECRET"),
-        token_uri="https://oauth2.googleapis.com/token",
-        scopes=SCOPES,
-    )
-    creds.refresh(Request())
-    return creds
+MAX_AUDIO_BYTES = 10 * 1024 * 1024  # 10 MB
 
 
 def transcribe_audio(audio_bytes: bytes) -> str:
     """Convert m4a audio bytes to text using ffmpeg + Google Speech-to-Text."""
+    if len(audio_bytes) > MAX_AUDIO_BYTES:
+        return ""
     m4a_file = None
     flac_file = None
     try:
@@ -55,7 +39,7 @@ def transcribe_audio(audio_bytes: bytes) -> str:
         with open(flac_file, "rb") as f:
             flac_bytes = f.read()
 
-        client = speech.SpeechClient(credentials=_get_credentials())
+        client = speech.SpeechClient(credentials=google_auth.get_credentials())
         response = client.recognize(
             config=speech.RecognitionConfig(
                 encoding=speech.RecognitionConfig.AudioEncoding.FLAC,
