@@ -22,6 +22,7 @@ from linebot.v3.messaging import (
 )
 
 import calendar_service
+import tasks_service
 
 TIMEZONE = ZoneInfo("Asia/Taipei")
 
@@ -72,20 +73,38 @@ async def morning_briefing():
         await _push(f"☀️ 早安 Brian！取得行程失敗：{e}")
         return
 
-    if not events:
-        await _push("☀️ 早安 Brian！今明兩天沒有行程，放鬆一下！")
+    # Fetch incomplete tasks
+    try:
+        tasks = tasks_service.get_tasks(include_completed=False)
+    except Exception:
+        tasks = []
+
+    if not events and not tasks:
+        await _push("☀️ 早安 Brian！今明兩天沒有行程，也沒有待辦事項，放鬆一下！")
         return
 
-    lines = ["☀️ 早安 Brian！今明兩天的行程：\n"]
-    for e in events:
-        start = (e.get("start") or {})
-        if "dateTime" in start:
-            dt = datetime.fromisoformat(start["dateTime"]).astimezone(TIMEZONE)
-            time_str = dt.strftime("%m/%d (%a) %H:%M")
-        else:
-            # All-day event
-            time_str = f"{start.get('date', '')} (整天)"
-        lines.append(f"📅 {e.get('summary', '(no title)')} — {time_str}")
+    lines = ["☀️ 早安 Brian！\n"]
+
+    if events:
+        lines.append("📅 今明兩天的行程：")
+        for e in events:
+            start = (e.get("start") or {})
+            if "dateTime" in start:
+                dt = datetime.fromisoformat(start["dateTime"]).astimezone(TIMEZONE)
+                time_str = dt.strftime("%m/%d (%a) %H:%M")
+            else:
+                time_str = f"{start.get('date', '')} (整天)"
+            lines.append(f"  • {e.get('summary', '(no title)')} — {time_str}")
+    else:
+        lines.append("📅 今明兩天沒有行程")
+
+    if tasks:
+        lines.append("\n☐ 待辦事項：")
+        for t in tasks:
+            due = f"（期限 {t['due'][:10]}）" if t.get("due") else ""
+            lines.append(f"  • {t.get('title', '(no title)')}{due}")
+    else:
+        lines.append("\n☐ 沒有待辦事項")
 
     await _push("\n".join(lines))
 
