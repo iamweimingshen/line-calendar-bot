@@ -22,10 +22,17 @@ def create_task(title: str, notes: str = "", due: str = "") -> dict:
     if notes:
         body["notes"] = notes
     if due:
-        # Ensure valid RFC3339 UTC format (e.g. "2026-03-07T00:00:00Z")
+        # Normalise to RFC3339 UTC: strip any tz offset and append Z
         if "T" not in due:
             due = due + "T00:00:00Z"
-        elif not due.endswith("Z"):
+        elif due.endswith("Z"):
+            pass  # already correct
+        elif "+" in due[10:] or due.count("-") > 2:
+            # Has offset like +08:00 — convert to UTC naive then add Z
+            from datetime import timezone as _tz
+            from datetime import datetime as _dt
+            due = _dt.fromisoformat(due).astimezone(_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        else:
             due = due + "Z"
         body["due"] = due
     return service.tasks().insert(tasklist=TASKLIST, body=body).execute()

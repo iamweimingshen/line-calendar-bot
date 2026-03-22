@@ -8,8 +8,9 @@ Conversation memory: keeps last 5 rounds per user.
 Resets if the user has been inactive for more than 10 minutes.
 """
 
+import asyncio
 import os
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import anthropic
 import calendar_service
@@ -128,7 +129,7 @@ TOOLS = [
 
 
 def _system_prompt() -> str:
-    today = date.today().strftime("%Y-%m-%d (%A)")
+    today = datetime.now(TIMEZONE).strftime("%Y-%m-%d (%A)")
     return f"""You are Brian's personal assistant on LINE.
 Brian is in Taipei, Taiwan (UTC+8). Today is {today}.
 
@@ -215,7 +216,7 @@ async def process_message(user_message: str, user_id: str = "default") -> str:
             if block.type != "tool_use":
                 continue
             try:
-                result = _execute_tool(block.name, block.input)
+                result = await asyncio.to_thread(_execute_tool, block.name, block.input)
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": block.id,

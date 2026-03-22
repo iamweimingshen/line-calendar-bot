@@ -12,9 +12,14 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from dotenv import load_dotenv
 
-logger = logging.getLogger(__name__)
-
 load_dotenv(Path(__file__).parent / ".env")
+
+# Configure logging before anything else so all modules inherit it
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 from fastapi import FastAPI, Request, HTTPException
 from linebot.v3 import WebhookParser
@@ -32,20 +37,43 @@ import claude_service
 import speech_service
 from scheduler import create_scheduler
 
-LINE_CHANNEL_SECRET       = os.environ.get("LINE_CHANNEL_SECRET", "")
-LINE_CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
-LINE_USER_ID              = os.environ.get("LINE_USER_ID", "")
+# ── Startup validation ────────────────────────────────────────────────────────
+_REQUIRED_ENV = [
+    "LINE_CHANNEL_SECRET",
+    "LINE_CHANNEL_ACCESS_TOKEN",
+    "LINE_USER_ID",
+    "ANTHROPIC_API_KEY",
+    "GOOGLE_CLIENT_ID",
+    "GOOGLE_CLIENT_SECRET",
+    "GOOGLE_REFRESH_TOKEN",
+]
+
+def _validate_env():
+    missing = [k for k in _REQUIRED_ENV if not os.environ.get(k)]
+    if missing:
+        raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
+
+_validate_env()
+
+LINE_CHANNEL_SECRET       = os.environ["LINE_CHANNEL_SECRET"]
+LINE_CHANNEL_ACCESS_TOKEN = os.environ["LINE_CHANNEL_ACCESS_TOKEN"]
+LINE_USER_ID              = os.environ["LINE_USER_ID"]
 
 configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 parser        = WebhookParser(LINE_CHANNEL_SECRET)
 
+# Reply token is only valid for 30 seconds — leave 5s margin
+_REPLY_TIMEOUT = 25.0
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    logger.info("Starting LINE Calendar Bot")
     scheduler = create_scheduler()
     scheduler.start()
     yield
     scheduler.shutdown()
+    logger.info("LINE Calendar Bot stopped")
 
 
 app = FastAPI(lifespan=lifespan)
@@ -70,30 +98,47 @@ async def webhook(request: Request):
         if not isinstance(event, MessageEvent):
             continue
 
-        # Fail-secure: if LINE_USER_ID is not configured, reject all messages
-        if not LINE_USER_ID or event.source.user_id != LINE_USER_ID:
+        # Fail-secure: reject any user that isn't the configured owner
+        if event.source.user_id != LINE_USER_ID:
             continue
 
         user_id = event.source.user_id
 
         if isinstance(event.message, TextMessageContent):
-            asyncio.create_task(
+            task = asyncio.create_task(
                 _handle_message(event.message.text, event.reply_token, user_id)
             )
+            task.add_done_callback(_log_task_exception)
         elif isinstance(event.message, AudioMessageContent):
-            asyncio.create_task(
+            task = asyncio.create_task(
                 _handle_audio(event.message.id, event.reply_token, user_id)
             )
+            task.add_done_callback(_log_task_exception)
 
     return {"status": "ok"}
 
 
+def _log_task_exception(task: asyncio.Task):
+    """Log any unhandled exception from a fire-and-forget task."""
+    if not task.cancelled() and task.exception():
+        logger.exception("Unhandled exception in background task", exc_info=task.exception())
+
+
 async def _handle_message(user_message: str, reply_token: str, user_id: str):
     try:
-        reply = await claude_service.process_message(user_message, user_id)
+        reply = await asyncio.wait_for(
+            claude_service.process_message(user_message, user_id),
+            timeout=_REPLY_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("Message processing timed out for user %s", user_id)
+        reply = "⏱ 處理時間過長，請稍後再試。"
     except Exception as e:
         logger.exception("Error processing message for user %s", user_id)
-        reply = "❌ 發生錯誤，請稍後再試。"
+        if "invalid_grant" in str(e).lower():
+            reply = "⚠️ Google 授權已過期，請通知管理員重新授權。"
+        else:
+            reply = "❌ 發生錯誤，請稍後再試。"
 
     await _reply(reply_token, reply)
 
@@ -104,25 +149,40 @@ async def _handle_audio(message_id: str, reply_token: str, user_id: str):
             blob_api = AsyncMessagingApiBlob(api_client)
             audio_bytes = await blob_api.get_message_content(message_id)
 
-        text = await asyncio.to_thread(speech_service.transcribe_audio, audio_bytes)
+        text = await asyncio.wait_for(
+            asyncio.to_thread(speech_service.transcribe_audio, audio_bytes),
+            timeout=15.0,
+        )
         if not text:
             await _reply(reply_token, "❌ 無法辨識語音，請再說一次或改用文字。")
             return
 
-        reply = await claude_service.process_message(text, user_id)
+        reply = await asyncio.wait_for(
+            claude_service.process_message(text, user_id),
+            timeout=_REPLY_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("Audio processing timed out for user %s", user_id)
+        reply = "⏱ 處理時間過長，請改用文字。"
     except Exception as e:
         logger.exception("Error processing audio for user %s", user_id)
-        reply = "❌ 語音處理失敗，請稍後再試或改用文字。"
+        if "invalid_grant" in str(e).lower():
+            reply = "⚠️ Google 授權已過期，請通知管理員重新授權。"
+        else:
+            reply = "❌ 語音處理失敗，請稍後再試或改用文字。"
 
     await _reply(reply_token, reply)
 
 
 async def _reply(reply_token: str, text: str):
-    async with AsyncApiClient(configuration) as api_client:
-        api = AsyncMessagingApi(api_client)
-        await api.reply_message(
-            ReplyMessageRequest(
-                reply_token=reply_token,
-                messages=[TextMessage(text=text[:5000])],
+    try:
+        async with AsyncApiClient(configuration) as api_client:
+            api = AsyncMessagingApi(api_client)
+            await api.reply_message(
+                ReplyMessageRequest(
+                    reply_token=reply_token,
+                    messages=[TextMessage(text=text[:5000])],
+                )
             )
-        )
+    except Exception:
+        logger.exception("Failed to send LINE reply")

@@ -7,9 +7,13 @@ Background jobs:
 - Every minute: push reminder 15 mins before timed events (not all-day)
 """
 
+import asyncio
+import logging
 import os
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+
+logger = logging.getLogger(__name__)
 
 import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -65,18 +69,24 @@ async def morning_briefing():
     tomorrow_end = today_start + timedelta(days=2)
 
     try:
-        events = calendar_service.get_events(
+        events = await asyncio.to_thread(
+            calendar_service.get_events,
             start_date=today_start.isoformat(),
             end_date=tomorrow_end.isoformat(),
         )
     except Exception as e:
-        await _push(f"☀️ 早安 Brian！取得行程失敗：{e}")
+        logger.exception("morning_briefing: failed to fetch events")
+        if "invalid_grant" in str(e).lower():
+            await _push("⚠️ Google 授權已過期！請在本機重新執行 get_google_token.py 並更新 Render 環境變數。")
+        else:
+            await _push("☀️ 早安 Brian！取得行程失敗，請稍後確認 bot 狀態。")
         return
 
     # Fetch incomplete tasks
     try:
-        tasks = tasks_service.get_tasks(include_completed=False)
+        tasks = await asyncio.to_thread(tasks_service.get_tasks, include_completed=False)
     except Exception:
+        logger.exception("morning_briefing: failed to fetch tasks")
         tasks = []
 
     if not events and not tasks:
@@ -106,7 +116,10 @@ async def morning_briefing():
     else:
         lines.append("\n☐ 沒有待辦事項")
 
-    await _push("\n".join(lines))
+    try:
+        await _push("\n".join(lines))
+    except Exception:
+        logger.exception("morning_briefing: failed to send LINE push")
 
 
 async def check_upcoming_reminders():
@@ -120,11 +133,13 @@ async def check_upcoming_reminders():
     window_end   = target + timedelta(seconds=30)
 
     try:
-        events = calendar_service.get_events(
+        events = await asyncio.to_thread(
+            calendar_service.get_events,
             start_date=window_start.isoformat(),
             end_date=window_end.isoformat(),
         )
     except Exception:
+        logger.exception("check_upcoming_reminders: failed to fetch events")
         return
 
     # Prune entries older than 24 hours to prevent unbounded growth
@@ -147,7 +162,12 @@ async def check_upcoming_reminders():
         dt       = datetime.fromisoformat(event["start"]["dateTime"]).astimezone(TIMEZONE)
         time_str = dt.strftime("%H:%M")
 
-        await _push(f"⏰ 提醒：《{title}》15 分鐘後開始（{time_str}）")
+        try:
+            await _push(f"⏰ 提醒：《{title}》15 分鐘後開始（{time_str}）")
+        except Exception:
+            logger.exception("check_upcoming_reminders: failed to send reminder for %s", event_id)
+            # Remove from reminded set so we can retry on next tick
+            _reminded_events.pop(event_id, None)
 
 
 def create_scheduler() -> AsyncIOScheduler:
